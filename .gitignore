@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.DS_Store
+# 运行时生成的输出（README 用到的几张图在 assets/）
+out/
+train.log
+# 完整 checkpoint 含优化器状态（约 160 MB，超过 GitHub 单文件上限）；仓库只放演示用的 EMA 权重
+checkpoints/latest.pt
