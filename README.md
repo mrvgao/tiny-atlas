@@ -1,106 +1,110 @@
 # tiny-atlas
 
-一个能在 Mac 上训练、端到端跑通的**迷你 world model**，用来讲清楚 World Labs [Atlas](https://www.worldlabs.ai/blog/atlas) 这类模型背后的原理。
+**English** | [中文](README.zh-CN.md)
 
-*A tiny, end-to-end world model you can train on a laptop in about an hour — built for teaching how pose-conditioned, autoregressive diffusion world models (like World Labs' Atlas) work.*
+A tiny **world model** that you can train on a laptop in about an hour and run end to end. It is built for teaching the ideas behind models like World Labs' [Atlas](https://www.worldlabs.ai/blog/atlas).
 
-**多视角数据 → Plücker 相机编码 → Transformer → rectified flow 去噪 → 自回归生成新视角 → 深度 → 点云**
+**Multi-view data → Plücker camera encoding → Transformer → rectified-flow denoising → autoregressive novel views → depth → point cloud**
 
-![只给 1 张照片，自回归地绕场景生成一圈](assets/orbit.gif)
+![From ONE photo, autoregressively generate an orbit around the scene](assets/orbit.gif)
 
-> 这是一个独立的教学实现，与 World Labs 无关。Atlas 没有公开论文和代码，这里的设计（尤其是用 Plücker 射线编码相机位姿）是按领域惯例做的合理推测，不代表 Atlas 的真实实现。
+> This is an independent educational implementation and is not affiliated with World Labs. Atlas has no public paper or code. The design choices here (in particular, encoding camera pose with Plücker rays) are reasonable guesses based on common practice in the field, not Atlas's actual implementation.
 
-## 快速开始
-
-```bash
-pip install torch numpy matplotlib pillow
-python walkthrough.py     # 分步演示（推荐）：打开窗口，一步步展示模型内部
-python demo.py            # 一次性生成 6 张演示图到 out/
-```
-
-仓库自带训练好的权重 `checkpoints/atlas_mini_ema.pt`（约 40 MB），克隆下来就能直接运行演示。有 Apple Silicon 时自动使用 Mac GPU（MPS），否则用 CPU。
-
-想自己从头训练：
+## Quick start
 
 ```bash
-python train.py           # Mac GPU 约 1 小时（24000 步），每 2000 步在 checkpoints/previews/ 存一张预览图
+pip install -r requirements.txt
+python walkthrough.py     # step-by-step walkthrough (recommended): opens a window and reveals the model's internals
+python demo.py            # writes six demo figures to out/
 ```
 
-## 分步演示（walkthrough）
+Trained weights are included (`checkpoints/atlas_mini_ema.pt`, about 40 MB), so the demos run right after cloning. The Mac GPU (MPS) is used automatically on Apple Silicon; otherwise it runs on the CPU.
+
+To train from scratch:
 
 ```bash
-python walkthrough.py            # 启动约 10 秒（预先把所有东西算好）
-python walkthrough.py --scene 2  # 换一个训练时从没见过的测试场景
-python walkthrough.py --gif      # 不开窗口，把每一步录成 GIF，存到 out/gifs/
-python walkthrough.py --export   # 不开窗口，把每一步的开始/中间/结束帧存成 PNG
+python train.py           # about 1 hour on an Apple Silicon GPU (24,000 steps); saves a preview to checkpoints/previews/ every 2,000 steps
 ```
 
-按键：**→ / 空格** 下一步 · **←** 上一步 · **R** 重播当前动画 · **Q** 退出
+## Step-by-step walkthrough
 
-| 步骤 | 画面 | 动画 |
+```bash
+python walkthrough.py            # takes about 10 s to start (everything is precomputed up front)
+python walkthrough.py --scene 2  # another test scene never seen during training
+python walkthrough.py --gif      # no window: record each step as a GIF (each under 2 MB) into out/gifs/
+python walkthrough.py --export   # no window: save the first / middle / last frame of each step as PNGs
+```
+
+Keys: **→ / Space** next step · **←** previous step · **R** replay the current animation · **Q** quit
+
+The on-screen captions are in Chinese.
+
+| Step | What you see | Animation |
 |---|---|---|
-| 1 世界和相机 | 场景点云 + 3 台相机的视锥 + 两张照片 + 一个"?" | 3D 视角缓慢旋转 |
-| 2 Plücker 射线 | 从相机射出的光线扇面 + 两台相机的 d、m 图 | 光线一条条出现 |
-| 3 矩 m = o × d | 3D 里的原点、o、d、平行四边形和 m，旁边是 m 图和实时数值 | 扫过像素 / o 沿光线滑动（m 不变）/ 反向看（m → −m） |
-| 4 切成 token | 照片切成 8×8 格 → 3 组 token（上下文 ×2 + 噪声目标） | token 逐个亮起 |
-| 5 注意力 | 目标视角里一个黄框 → 上下文照片上的注意力热图 + 真实对应点 × | 轮流换不同位置 |
-| 6 去噪 | x_t、x₀ 估计（RGB 和深度）、t 进度条 | 40 步去噪逐帧播放 |
-| 7 自回归 | 上下文窗口 + 俯视相机位置图 + 逐个生成的 12 个视角 | 每秒生成一张 |
-| 8 长出 3D | 生成视角的深度逐个融合成点云 | 边增长边旋转 |
+| 1 World and cameras | Scene point cloud, frustums of 3 cameras, two photos and a "?" | The 3D view slowly rotates |
+| 2 Plücker rays | A fan of rays shot from a camera, plus the d and m maps of two cameras | Rays appear one by one |
+| 3 Moment m = o × d | Origin, o, d, their parallelogram and m in 3D, next to the m map and live numbers | Sweep across pixels / slide o along the ray (m unchanged) / look the other way (m → −m) |
+| 4 Tokens | A photo cut into an 8×8 grid → 3 groups of tokens (2 context + 1 noisy target) | Tokens light up one by one |
+| 5 Attention | A yellow box in the target view → attention heat map over the context photos, with the true correspondence marked × | Cycles through positions |
+| 6 Denoising | x_t, the model's estimate of x₀ (RGB and depth), and a t progress bar | 40 denoising steps, frame by frame |
+| 7 Autoregression | The context window, a top-down map of camera positions, and 12 views generated one after another | One new view per second |
+| 8 Growing 3D | Depth from each generated view fused into a point cloud | Grows while rotating |
 
-**第 5 步：注意力自己学会了 3D 对应**。目标视角里一个位置（黄框），在上下文照片里最关注哪里（亮处）；青色 × 是按真实 3D 几何算出的对应点。在测试场景上，最后三层的注意力峰值有 76%–84% 落在对应点一个 patch 以内（随机约为 12 像素远）——模型从没被教过几何。
+**Step 5: attention learns 3D correspondence by itself.** For a position in the target view (yellow box), the bright areas show where the model looks in the context photos, and the cyan × marks the correspondence computed from the true 3D geometry. On test scenes, the attention peak in the last three layers lands within one patch of the true correspondence 76–84% of the time (versus about 12 px away for a random guess). The model was never taught geometry.
 
-![注意力](assets/step5_attention.gif)
+![Attention](assets/step5_attention.gif)
 
-**第 3 步：m = o × d 编码光线“在哪里”**。|m| 是原点到光线的距离；o 沿光线滑动时 m 不变（照片没有深度，编码本来就不该依赖取光线上的哪个点）；反向看时 m 变号。
+**Step 3: m = o × d encodes *where* a ray is.** |m| is the distance from the origin to the ray. Sliding o along the ray leaves m unchanged; since a photo carries no depth, the encoding should not depend on which point of the ray you pick. Looking the opposite way flips the sign of m.
 
-![Plücker 矩](assets/step3_moment.gif)
+![Plücker moment](assets/step3_moment.gif)
 
-**第 6 步：去噪**。下排是模型每一步对 x₀ 的估计：先是模糊的“平均”，再逐渐拿定主意。
+**Step 6: denoising.** The bottom row is the model's estimate of x₀ at each step: first a blurry "average", then it gradually commits to one answer.
 
-![去噪](assets/step6_denoise.gif)
+![Denoising](assets/step6_denoise.gif)
 
-## 演示图（demo.py）
+## Demo figures (demo.py)
 
 ```bash
-python demo.py                 # 输出 out/ 下 6 张图 + orbit.gif
-python demo.py --scene 3       # 换测试场景
-python demo.py --cfg 1.0       # 关掉 classifier-free guidance 对比
+python demo.py                 # six figures + orbit.gif in out/
+python demo.py --scene 3       # another test scene
+python demo.py --cfg 1.0       # turn off classifier-free guidance for comparison
 ```
 
-1. **看得越多，想象越少**：同一场景给 1/2/4 张上下文，新视角越来越接近真实（PSNR 上升）
-2. **自回归环绕**：只给 1 张照片，每生成一张就接回上下文。转到背面时 PSNR 最低（纯靠想象），转回来又变好
-3. **点云**：生成的深度反投影、多视角融合，和真实点云对比
-4. **去噪过程**：x_t 和模型每一步对 x₀ 的估计
-5. **分布而非答案**：同一张照片、不同噪声，照片里看不到的背面有不同的合理猜测；完全不给照片时是纯想象
-6. **训练曲线**：每个 batch 都是全新的随机世界，模型没法背答案
+1. **The more it sees, the less it imagines**: with 1 / 2 / 4 context views of the same scene, novel views get closer to the truth (PSNR goes up)
+2. **Autoregressive orbit**: from a single photo, each generated view is fed back as context. PSNR is lowest directly behind the scene (pure imagination) and recovers on the way back
+3. **Point cloud**: generated depth is backprojected, fused across views and compared with the true point cloud
+4. **Denoising**: x_t and the model's estimate of x₀ at each step
+5. **A distribution, not one answer**: the same photo with different noise gives different plausible guesses for the unseen back side; with no photo at all, it is pure imagination
+6. **Training curve**: every batch is a brand-new random world, so the model cannot memorize answers
 
-![自回归环绕：PSNR 在正背面最低](assets/2_orbit.png)
+![Autoregressive orbit: PSNR is lowest directly behind](assets/2_orbit.png)
 
-![分布而非答案](assets/5_imagination.png)
+![A distribution, not one answer](assets/5_imagination.png)
 
-## 代码结构
+## Code layout
 
-| 文件 | 内容 | 对应的概念 |
+| File | Contents | Concept |
 |---|---|---|
-| `scenes.py` | 随机生成场景（地板 + 方块/球），光线求交渲染 RGB-D；`plucker()`；`backproject()` | 相机位姿的数学、深度反投影 |
-| `model.py` | `AtlasMini`：patch token + Plücker + 角色 + 位置，adaLN 注入 t，双向注意力；`generate_view()` 含 CFG | 核心架构、空间上下文 |
-| `train.py` | `flow_loss()`：抽 ε、抽 t、构造 x_t、目标 ε − x₀、MSE | rectified flow |
-| `demo.py` | 6 张演示图 | 自回归、3D 输出 |
-| `walkthrough.py` | 8 步交互演示 | 全流程 |
+| `scenes.py` | Random scenes (floor + boxes / spheres), ray-cast RGB-D rendering; `plucker()`; `backproject()` | Camera pose math, depth backprojection |
+| `model.py` | `AtlasMini`: patch tokens + Plücker + role + position, adaLN time conditioning, bidirectional attention; `generate_view()` with CFG | Core architecture, spatial context |
+| `train.py` | `flow_loss()`: sample ε and t, build x_t, target ε − x₀, MSE | Rectified flow |
+| `demo.py` | Six demo figures | Autoregression, 3D output |
+| `walkthrough.py` | Eight-step interactive walkthrough | The whole pipeline |
 
-## 和真实 Atlas 的差别
+Code comments are in Chinese.
+
+## How it differs from the real Atlas
 
 | | tiny-atlas | Atlas |
 |---|---|---|
-| 规模 | 32×32，约 1000 万参数，训练 1 小时 | 1440p，参数量未公开 |
-| VAE | 无，直接在像素上去噪 | latent diffusion |
-| 数据 | 程序生成的方块世界 | 真实世界的图像、视频、位姿、深度 |
-| 推理 | 每步重算整条序列 | KV cache 等 LLM 推理技术 |
-| 位姿编码 | Plücker 射线 | 未公开（Plücker 是业界常见做法，属推测） |
+| Scale | 32×32, about 10M parameters, 1 hour of training | 1440p, parameter count not disclosed |
+| VAE | None; denoises directly in pixel space | Latent diffusion |
+| Data | Procedurally generated block worlds | Real-world images, video, poses and depth |
+| Inference | Recomputes the whole sequence at every step | LLM inference techniques such as KV caching |
+| Pose encoding | Plücker rays | Not disclosed (Plücker rays are common practice; this is a guess) |
 
-## 训练中踩过的坑
+## Lessons learned while training
 
-- **噪声时间 t 的采样分布**：一开始用了 SD3 的 logit-normal，它几乎不训练 t < 0.1 的区间（只占 1.4%），生成结果满是残留噪点。改成均匀分布后问题消失。结论：noise schedule 要随分辨率调整，SD3 的设定是给高分辨率准备的。
-- **EMA 要预热**：衰减 0.999 的 EMA 在训练初期几乎全是随机初始化的权重，早期 checkpoint 的生成质量反而比原始权重差。
-- **macOS 上 matplotlib 动画会冻住**：在计时器自己的回调里调用 `timer.stop()` 之后，之后的所有计时器都不再触发。`walkthrough.py` 因此整个会话只用一个常驻计时器，按时间决定何时进下一帧。
+- **The distribution of the noise time t matters.** The first run used SD3's logit-normal sampling, which almost never trains t < 0.1 (only 1.4% of samples), and the outputs were full of leftover noise. Switching to uniform sampling fixed it. Takeaway: the noise schedule should depend on resolution, and SD3's setting targets high-resolution images.
+- **EMA needs a warm-up.** Early in training, an EMA with decay 0.999 is still mostly the random initial weights, so early checkpoints generated worse samples than the raw weights.
+- **matplotlib animations freeze on macOS.** After calling `timer.stop()` inside a timer's own callback, no timer fires again. `walkthrough.py` therefore keeps a single timer running for the whole session and advances frames based on elapsed time.
