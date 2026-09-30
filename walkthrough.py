@@ -707,14 +707,30 @@ def export(D):
     print(f"已导出到 {out}")
 
 
-def export_gifs(D, dpi=72):
-    """每一步录成一个 GIF（适合贴到白板）。结尾停 2 秒；帧太密的步骤隔帧抽取。"""
+def export_gifs(D, dpi=72, max_mb=1.9):
+    """每一步录成一个 GIF（适合贴到白板，白板单个 GIF 上限 2 MB）。
+
+    结尾停 2 秒；超过 max_mb 时依次尝试：减少颜色 → 隔帧抽取 → 缩小尺寸。
+    """
     from PIL import Image
 
     out = OUT / "gifs"
     out.mkdir(parents=True, exist_ok=True)
     names = ["world", "plucker", "moment", "tokens", "attention", "denoise", "autoregressive", "pointcloud"]
     stride = {step1_world: 3, step3_tokens: 2}  # 180 帧的旋转、49 帧的 token 动画隔帧抽取
+    attempts = [(256, 1, 1.0), (128, 1, 1.0), (128, 2, 1.0), (128, 2, 0.8), (96, 3, 0.7)]  # (颜色数, 额外抽帧, 缩放)
+
+    def encode(path, frames, durations, loop, colors, skip, scale):
+        fr, du = frames[::skip], [sum(durations[i:i + skip]) for i in range(0, len(durations), skip)]
+        if not loop:
+            du[-1] = max(du[-1], 2000)  # 结尾停一下再重播
+        if scale != 1.0:
+            w, h = fr[0].size
+            fr = [f.resize((int(w * scale), int(h * scale)), Image.LANCZOS) for f in fr]
+        q = [f.quantize(colors=colors, method=Image.Quantize.MEDIANCUT) for f in fr]
+        q[0].save(path, save_all=True, append_images=q[1:], duration=du, loop=0, optimize=True)
+        return len(q), sum(du), fr[0].size
+
     for k, (title, caption, build) in enumerate(STEPS):
         fig = plt.figure(figsize=(15, 8.4), dpi=dpi)
         fig.text(0.02, 0.955, f"第 {k + 1}/{len(STEPS)} 步　{title}", fontsize=18, weight="bold")
@@ -725,15 +741,17 @@ def export_gifs(D, dpi=72):
         for i in range(0, n, step):
             update(i)
             fig.canvas.draw()
-            img = Image.fromarray(np.asarray(fig.canvas.buffer_rgba())[..., :3])
-            frames.append(img.quantize(colors=256, method=Image.Quantize.MEDIANCUT))
+            frames.append(Image.fromarray(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()))
             durations.append(interval * step)
-        if not loop or n == 1:
-            durations[-1] = max(durations[-1], 2000)  # 结尾停一下再重播
-        path = out / f"step{k + 1}_{names[k]}.gif"
-        frames[0].save(path, save_all=True, append_images=frames[1:], duration=durations, loop=0, optimize=True)
         plt.close(fig)
-        print(f"  {path.name}: {len(frames)} 帧，{sum(durations) / 1000:.1f} 秒，{path.stat().st_size / 1e6:.1f} MB")
+        path = out / f"step{k + 1}_{names[k]}.gif"
+        for colors, skip, scale in attempts:
+            nf, total, size = encode(path, frames, durations, loop and n > 1, colors, skip, scale)
+            mb = path.stat().st_size / 1e6
+            if mb <= max_mb:
+                break
+        note = "" if (colors, skip, scale) == attempts[0] else f"（已压缩：{colors} 色，每 {skip} 帧取 1，尺寸 ×{scale}）"
+        print(f"  {path.name}: {nf} 帧，{total / 1000:.1f} 秒，{size[0]}×{size[1]}，{mb:.2f} MB{note}")
     print(f"已导出 GIF 到 {out}")
 
 
