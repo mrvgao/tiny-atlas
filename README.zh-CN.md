@@ -33,6 +33,7 @@ python walkthrough.py            # 启动约 10 秒（预先把所有东西算�
 python walkthrough.py --scene 2  # 换一个训练时从没见过的测试场景
 python walkthrough.py --gif      # 不开窗口，把每一步录成 GIF（每个 2 MB 以内），存到 out/gifs/
 python walkthrough.py --export   # 不开窗口，把每一步的开始/中间/结束帧存成 PNG
+python walkthrough.py --lang en  # 画面文字改成英文
 ```
 
 按键：**→ / 空格** 下一步 · **←** 上一步 · **R** 重播当前动画 · **Q** 退出

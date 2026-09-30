@@ -14,8 +14,8 @@ A tiny **world model** that you can train on a laptop in about an hour and run e
 
 ```bash
 pip install -r requirements.txt
-python walkthrough.py     # step-by-step walkthrough (recommended): opens a window and reveals the model's internals
-python demo.py            # writes six demo figures to out/
+python walkthrough.py --lang en   # step-by-step walkthrough (recommended): opens a window and reveals the model's internals
+python demo.py                    # writes six demo figures to out/
 ```
 
 Trained weights are included (`checkpoints/atlas_mini_ema.pt`, about 40 MB), so the demos run right after cloning. The Mac GPU (MPS) is used automatically on Apple Silicon; otherwise it runs on the CPU.
@@ -29,15 +29,15 @@ python train.py           # about 1 hour on an Apple Silicon GPU (24,000 steps);
 ## Step-by-step walkthrough
 
 ```bash
-python walkthrough.py            # takes about 10 s to start (everything is precomputed up front)
-python walkthrough.py --scene 2  # another test scene never seen during training
-python walkthrough.py --gif      # no window: record each step as a GIF (each under 2 MB) into out/gifs/
-python walkthrough.py --export   # no window: save the first / middle / last frame of each step as PNGs
+python walkthrough.py --lang en            # takes about 10 s to start (everything is precomputed up front)
+python walkthrough.py --lang en --scene 2  # another test scene never seen during training
+python walkthrough.py --lang en --gif      # no window: record each step as a GIF (each under 2 MB) into out/gifs_en/
+python walkthrough.py --lang en --export   # no window: save the first / middle / last frame of each step as PNGs
 ```
 
 Keys: **→ / Space** next step · **←** previous step · **R** replay the current animation · **Q** quit
 
-The on-screen captions are in Chinese.
+On-screen text is in English with `--lang en`; without it, it defaults to Chinese.
 
 | Step | What you see | Animation |
 |---|---|---|
@@ -52,15 +52,15 @@ The on-screen captions are in Chinese.
 
 **Step 5: attention learns 3D correspondence by itself.** For a position in the target view (yellow box), the bright areas show where the model looks in the context photos, and the cyan × marks the correspondence computed from the true 3D geometry. On test scenes, the attention peak in the last three layers lands within one patch of the true correspondence 76–84% of the time (versus about 12 px away for a random guess). The model was never taught geometry.
 
-![Attention](assets/step5_attention.gif)
+![Attention](assets/step5_attention_en.gif)
 
 **Step 3: m = o × d encodes *where* a ray is.** |m| is the distance from the origin to the ray. Sliding o along the ray leaves m unchanged; since a photo carries no depth, the encoding should not depend on which point of the ray you pick. Looking the opposite way flips the sign of m.
 
-![Plücker moment](assets/step3_moment.gif)
+![Plücker moment](assets/step3_moment_en.gif)
 
 **Step 6: denoising.** The bottom row is the model's estimate of x₀ at each step: first a blurry "average", then it gradually commits to one answer.
 
-![Denoising](assets/step6_denoise.gif)
+![Denoising](assets/step6_denoise_en.gif)
 
 ## Demo figures (demo.py)
 

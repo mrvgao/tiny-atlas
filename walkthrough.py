@@ -5,6 +5,7 @@
     python walkthrough.py --scene 2    # 换一个测试场景
     python walkthrough.py --export     # 不开窗口，把每一步的关键帧存到 out/walkthrough/
     python walkthrough.py --gif        # 不开窗口，把每一步录成 GIF，存到 out/gifs/
+    python walkthrough.py --lang en    # 画面文字改成英文（GIF / 导出存到 out/gifs_en/、out/walkthrough_en/）
 
 按键：→ 或 空格 下一步 · ← 上一步 · R 重播当前步骤的动画 · Q 退出
 
@@ -20,7 +21,9 @@
 
 import argparse
 import math
+import os
 import sys
+import threading
 import time
 
 import matplotlib
@@ -45,6 +48,15 @@ plt.rcParams["font.sans-serif"] = ["Arial Unicode MS", "PingFang HK", "Heiti TC"
 plt.rcParams["axes.unicode_minus"] = False
 for k in ("keymap.back", "keymap.forward", "keymap.home", "keymap.quit"):
     plt.rcParams[k] = []  # 这些键留给翻页
+
+# 画面语言：--lang en 为英文，默认中文。步骤标题在导入时就要用到，所以直接从命令行读取
+LANG = "en" if any(a in ("--lang=en",) for a in sys.argv) or \
+    ("--lang" in sys.argv and sys.argv[sys.argv.index("--lang") + 1:][:1] == ["en"]) else "zh"
+
+
+def L(zh: str, en: str) -> str:
+    return en if LANG == "en" else zh
+
 
 CTX_COLORS = ["#e53e3e", "#3182ce"]
 TGT_COLOR = "#38a169"
@@ -159,7 +171,8 @@ def prepare(scene_id: int, dev: str) -> dict:
                             torch.stack([es[i] for i in keep]), Rp[k:k + 1], ep[k:k + 1], dev, seed=k)
         x = frames[-1]["x"].to(dev)
         orbit.append({"azim": azims[k], "img": x.cpu(), "window": [imgs[i].cpu() for i in keep],
-                      "window_labels": ["真实 0°" if i == 0 else f"生成 {azims[i - 1]}°" for i in keep],
+                      "window_labels": [L("真实 0°", "real 0°") if i == 0 else L(f"生成 {azims[i - 1]}°", f"gen {azims[i - 1]}°")
+                                        for i in keep],
                       "psnr": psnr(x, gt_orbit[k])})
         imgs.append(x)
         Rs.append(Rp[k])
@@ -247,13 +260,13 @@ def step1_world(fig, D):
         ax.imshow(rgb(D["ctx"][c]))
         clean(ax)
         frame_color(ax, CTX_COLORS[c])
-        ax.set_title(f"相机 {c + 1} 拍到的照片", fontsize=11, color=CTX_COLORS[c])
+        ax.set_title(L(f"相机 {c + 1} 拍到的照片", f"Photo from camera {c + 1}"), fontsize=11, color=CTX_COLORS[c])
     ax = fig.add_axes([0.7, 0.13, 0.17, 0.3])
     ax.set_facecolor("#f0f0f0")
     ax.text(0.5, 0.5, "?", fontsize=60, ha="center", va="center", color=TGT_COLOR, transform=ax.transAxes)
     clean(ax)
     frame_color(ax, TGT_COLOR)
-    ax.set_title("绿色虚线相机：我们想看到的新视角", fontsize=11, color=TGT_COLOR)
+    ax.set_title(L("绿色虚线相机：我们想看到的新视角", "Green dashed camera: the new view we want"), fontsize=11, color=TGT_COLOR)
 
     def update(i):
         ax3.view_init(elev=28, azim=-60 + i * 2)
@@ -279,7 +292,9 @@ def step2_plucker(fig, D):
         end = eye + 5.5 * dn
         rays.append(ax3.plot(*zip(eye.numpy(), end.numpy()), c=photo[v, u], lw=1.2, alpha=0.9)[0])
         rays[-1].set_visible(False)
-    fig.text(0.25, 0.1, "红色相机：每个像素 → 一条从相机出发的 3D 光线（颜色 = 该像素的颜色）", fontsize=12, ha="center")
+    fig.text(0.25, 0.1, L("红色相机：每个像素 → 一条从相机出发的 3D 光线（颜色 = 该像素的颜色）",
+                          "Red camera: each pixel → a 3D ray from the camera (color = that pixel's color)"),
+             fontsize=12, ha="center")
 
     # 伪彩色：把向量的 (x, y, z) 三个分量直接当成 (R, G, B)。两台相机用同一套映射，颜色才能互相比较
     pl = D["plucker"].permute(0, 2, 3, 1).numpy()  # (2, H, W, 6)
@@ -287,15 +302,17 @@ def step2_plucker(fig, D):
     m_scale = np.abs(pl[..., 3:]).max()
     m_show = (pl[..., 3:] / m_scale + 1) / 2
     for c in range(2):
-        for j, (name, im) in enumerate([("方向 d", d_show[c]), ("矩 m = o × d", m_show[c])]):
+        for j, (name, im) in enumerate([(L("方向 d", "direction d"), d_show[c]), (L("矩 m = o × d", "moment m = o × d"), m_show[c])]):
             ax = fig.add_axes([0.55 + j * 0.22, 0.4 - c * 0.33, 0.19, 0.27])
             ax.imshow(np.clip(im, 0, 1))
             clean(ax)
             frame_color(ax, CTX_COLORS[c])
-            ax.set_title(f"相机 {c + 1}：{name}", fontsize=11, color=CTX_COLORS[c])
+            ax.set_title(L(f"相机 {c + 1}：{name}", f"Camera {c + 1}: {name}"), fontsize=11, color=CTX_COLORS[c])
     fig.text(0.75, 0.855, "Plücker(u, v) = ( d ,  o × d ) ∈ ℝ⁶", fontsize=14, ha="center")
-    fig.text(0.75, 0.82, "右侧是伪彩色：把向量的 (x, y, z) 当成 (R, G, B) 显示，和照片内容无关。\n"
-             "只取决于相机在哪、朝哪看——所以是平滑渐变，看不到任何物体。",
+    fig.text(0.75, 0.82, L("右侧是伪彩色：把向量的 (x, y, z) 当成 (R, G, B) 显示，和照片内容无关。\n"
+                           "只取决于相机在哪、朝哪看——所以是平滑渐变，看不到任何物体。",
+                           "False color: the vector's (x, y, z) is shown as (R, G, B); it has nothing to do with the photo.\n"
+                           "It depends only on where the camera is and where it looks, so it is a smooth gradient with no objects."),
              fontsize=10.5, ha="center", va="top", color="#b7791f")
 
     def update(i):
@@ -321,13 +338,13 @@ def step_moment(fig, D):
     ax3.view_init(elev=24, azim=-58)
     para = Poly3DCollection([np.zeros((4, 3))], facecolor="#7F77DD", alpha=0.25, edgecolor="#7F77DD")
     ax3.add_collection3d(para)
-    ray_ln, = ax3.plot([], [], [], c="#888780", lw=1.2, ls="--", label="光线（同一条直线）")
-    o_ln, = ax3.plot([], [], [], c="#378ADD", lw=2.5, marker="o", markevery=[1], label="o：原点 → 光线上一点（相机）")
-    d_ln, = ax3.plot([], [], [], c="#D85A30", lw=3, marker=">", markevery=[1], label="d：光线方向（单位长度）")
+    ray_ln, = ax3.plot([], [], [], c="#888780", lw=1.2, ls="--", label=L("光线（同一条直线）", "ray (one line)"))
+    o_ln, = ax3.plot([], [], [], c="#378ADD", lw=2.5, marker="o", markevery=[1], label=L("o：原点 → 光线上一点（相机）", "o: origin → a point on the ray (camera)"))
+    d_ln, = ax3.plot([], [], [], c="#D85A30", lw=3, marker=">", markevery=[1], label=L("d：光线方向（单位长度）", "d: ray direction (unit length)"))
     m_ln, = ax3.plot([], [], [], c="#534AB7", lw=3.5, marker="^", markevery=[1], label="m = o × d")
-    h_ln, = ax3.plot([], [], [], c="#BA7517", lw=2, ls=":", label="原点到光线的距离 = |m|")
+    h_ln, = ax3.plot([], [], [], c="#BA7517", lw=2, ls=":", label=L("原点到光线的距离 = |m|", "distance from origin to ray = |m|"))
     ax3.legend(loc="lower left", fontsize=9, frameon=False)
-    fig.text(0.05, 0.84, "黑点 = 世界原点（场景中心）", fontsize=10, color="#555")
+    fig.text(0.05, 0.84, L("黑点 = 世界原点（场景中心）", "Black dot = world origin (scene center)"), fontsize=10, color="#555")
 
     pl = D["plucker"].permute(0, 2, 3, 1).numpy()
     m_show = (pl[0, ..., 3:] / np.abs(pl[..., 3:]).max() + 1) / 2
@@ -335,17 +352,24 @@ def step_moment(fig, D):
     ax_m.imshow(np.clip(m_show, 0, 1))
     clean(ax_m)
     frame_color(ax_m, CTX_COLORS[0])
-    ax_m.set_title("相机 1 的 m 图（伪彩色）", fontsize=10, color=CTX_COLORS[0])
+    ax_m.set_title(L("相机 1 的 m 图（伪彩色）", "Camera 1: m map (false color)"), fontsize=10, color=CTX_COLORS[0])
     mark = Rectangle((0, 0), 1.6, 1.6, fill=False, ec="yellow", lw=2.5)
     ax_m.add_patch(mark)
     phase = fig.text(0.76, 0.76, "", fontsize=13, weight="bold", va="top")
     info = fig.text(0.76, 0.69, "", fontsize=11, va="top", linespacing=1.7)
-    fig.text(0.56, 0.4, "m = o × d 编码光线“在哪里”：\n"
-             "· |m| = |o|·sinθ = 原点到光线的距离（= 紫色平行四边形面积）\n"
-             "· m 的方向垂直于“原点 + 光线”所在的平面\n"
-             "· o 沿 d 滑动 → m 不变：照片没有深度，本来就不该依赖取线上哪个点\n"
-             "· 反向看 d → −d  ⇒  m → −m\n"
-             "· d 管“朝哪看”，m 管“在哪”，合起来唯一确定一条光线",
+    fig.text(0.56, 0.4, L("m = o × d 编码光线“在哪里”：\n"
+                          "· |m| = |o|·sinθ = 原点到光线的距离（= 紫色平行四边形面积）\n"
+                          "· m 的方向垂直于“原点 + 光线”所在的平面\n"
+                          "· o 沿 d 滑动 → m 不变：照片没有深度，本来就不该依赖取线上哪个点\n"
+                          "· 反向看 d → −d  ⇒  m → −m\n"
+                          "· d 管“朝哪看”，m 管“在哪”，合起来唯一确定一条光线",
+                          "m = o × d encodes WHERE the ray is:\n"
+                          "· |m| = |o|·sinθ = distance from origin to ray (= purple parallelogram area)\n"
+                          "· m is perpendicular to the plane through the origin and the ray\n"
+                          "· slide o along d → m unchanged: a photo has no depth,\n"
+                          "   so the point we pick on the ray should not matter\n"
+                          "· look the other way d → −d  ⇒  m → −m\n"
+                          "· d says which way the ray points, m says where it is"),
              fontsize=10.5, va="top", linespacing=1.9)
 
     sweep = [(u, 16) for u in range(2, 31, 2)] + [(16, v) for v in range(2, 31, 2)]
@@ -358,14 +382,14 @@ def step_moment(fig, D):
     def update(i):
         if i < n_a:
             (u, v), s, flip = sweep[i], 0.0, 1
-            phase.set_text("阶段 1/3：扫过不同像素")
+            phase.set_text(L("阶段 1/3：扫过不同像素", "Phase 1/3: sweep pixels"))
         elif i < n_a + n_b:
             (u, v), flip = slide_px, 1
             s = 2.4 * math.sin((i - n_a) / n_b * 2 * math.pi)
-            phase.set_text("阶段 2/3：把 o 换成光线上别的点")
+            phase.set_text(L("阶段 2/3：把 o 换成光线上别的点", "Phase 2/3: slide o along ray"))
         else:
             (u, v), s, flip = slide_px, 0.0, -1
-            phase.set_text("阶段 3/3：反向看（d → −d）")
+            phase.set_text(L("阶段 3/3：反向看（d → −d）", "Phase 3/3: reverse d → −d"))
         d = flip * d_all[v * S.IMG + u]
         p = o + s * d  # 光线上的一点
         m = np.cross(p, d)
@@ -378,7 +402,7 @@ def step_moment(fig, D):
         set3(h_ln, [0, 0, 0], foot)
         mark.set_xy((u - 0.8 - 0.5, v - 0.8 - 0.5))
         theta = math.degrees(math.acos(np.clip(np.dot(p, d) / np.linalg.norm(p), -1, 1)))
-        info.set_text(f"像素 (u={u:2d}, v={v:2d})\n"
+        info.set_text(L("像素", "pixel") + f" (u={u:2d}, v={v:2d})\n"
                       f"|o| = {np.linalg.norm(p):.2f}    θ = {theta:5.1f}°\n"
                       f"|m| = |o|·sinθ = {np.linalg.norm(m):.2f}\n"
                       f"m = ({m[0]:+.2f}, {m[1]:+.2f}, {m[2]:+.2f})")
@@ -394,11 +418,11 @@ def step3_tokens(fig, D):
         ax.axvline(k * 4 - 0.5, c="w", lw=1)
     clean(ax)
     frame_color(ax, CTX_COLORS[0])
-    ax.set_title("照片切成 8×8 个 patch（每块 4×4 像素）", fontsize=11)
+    ax.set_title(L("照片切成 8×8 个 patch（每块 4×4 像素）", "Photo cut into 8×8 patches (4×4 pixels each)"), fontsize=11)
 
-    panels = [(exploded(D["ctx"][0]), "上下文 1：64 个 token（干净）", CTX_COLORS[0]),
-              (exploded(D["ctx"][1]), "上下文 2：64 个 token（干净）", CTX_COLORS[1]),
-              (exploded(D["denoise"][0]["x"]), "目标：64 个 token（纯噪声）", TGT_COLOR)]
+    panels = [(exploded(D["ctx"][0]), L("上下文 1：64 个 token（干净）", "Context 1: 64 tokens (clean)"), CTX_COLORS[0]),
+              (exploded(D["ctx"][1]), L("上下文 2：64 个 token（干净）", "Context 2: 64 tokens (clean)"), CTX_COLORS[1]),
+              (exploded(D["denoise"][0]["x"]), L("目标：64 个 token（纯噪声）", "Target: 64 tokens (pure noise)"), TGT_COLOR)]
     ims = []
     for j, (im, title, color) in enumerate(panels):
         a = fig.add_axes([0.32 + j * 0.23, 0.36, 0.2, 0.4])
@@ -408,9 +432,11 @@ def step3_tokens(fig, D):
         clean(a)
         frame_color(a, color)
         a.set_title(title, fontsize=11, color=color)
-    fig.text(0.62, 0.24, "每个 token = W_img · patch  +  W_ray · Plücker  +  角色（上下文 / 目标）  +  位置",
+    fig.text(0.62, 0.24, L("每个 token = W_img · patch  +  W_ray · Plücker  +  角色（上下文 / 目标）  +  位置",
+                          "token = W_img · patch  +  W_ray · Plücker  +  role (context / target)  +  position"),
              fontsize=13, ha="center")
-    fig.text(0.62, 0.18, "3 × 64 = 192 个 token 排成一条序列，送进 8 层 Transformer（双向注意力）",
+    fig.text(0.62, 0.18, L("3 × 64 = 192 个 token 排成一条序列，送进 8 层 Transformer（双向注意力）",
+                          "3 × 64 = 192 tokens form one sequence → an 8-layer Transformer (bidirectional attention)"),
              fontsize=13, ha="center")
 
     def update(i):
@@ -432,7 +458,7 @@ def step4_attention(fig, D):
     ax_t.imshow(rgb(D["gt"]))
     clean(ax_t)
     frame_color(ax_t, TGT_COLOR)
-    ax_t.set_title("目标视角（显示真实图方便对照）", fontsize=11, color=TGT_COLOR)
+    ax_t.set_title(L("目标视角（显示真实图方便对照）", "Target view (ground truth shown for reference)"), fontsize=11, color=TGT_COLOR)
     box = Rectangle((0, 0), 4, 4, fill=False, ec="yellow", lw=3)
     ax_t.add_patch(box)
     heat, marks, axes = [], [], []
@@ -453,8 +479,11 @@ def step4_attention(fig, D):
                 ky, kx = divmod(k, 8)
                 total += 1
                 hits += math.hypot(kx * 4 + 2 - q["corr"][c][0], ky * 4 + 2 - q["corr"][c][1]) <= 6
-    fig.text(0.5, 0.12, f"青色 × = 按真实 3D 几何算出的对应点。本场景 {hits}/{total} 次注意力峰值落在对应点一个 patch 以内"
-             f"——没人教过它几何，是训练自己学会的。", ha="center", fontsize=12)
+    fig.text(0.5, 0.12, L(f"青色 × = 按真实 3D 几何算出的对应点。本场景 {hits}/{total} 次注意力峰值落在对应点一个 patch 以内"
+                          f"——没人教过它几何，是训练自己学会的。",
+                          f"Cyan × = true correspondence from 3D geometry. In this scene {hits}/{total} attention peaks land "
+                          f"within one patch of it.\nNobody taught the model geometry; it learned this from training."),
+             ha="center", va="top", fontsize=12)
 
     def update(i):
         q = qs[i % len(qs)]
@@ -465,7 +494,8 @@ def step4_attention(fig, D):
             heat[c].set_clim(0, max(w.max(), 1e-6))
             corr = q["corr"][c]
             marks[c].set_data([corr[0] - 0.5] if corr else [], [corr[1] - 0.5] if corr else [])
-            axes[c].set_title(f"相机 {c + 1}：黄框位置的注意力（占总注意力 {w.sum():.0%}）", fontsize=11,
+            axes[c].set_title(L(f"相机 {c + 1}：黄框位置的注意力（占总注意力 {w.sum():.0%}）",
+                                f"Camera {c + 1}: attention from the yellow box ({w.sum():.0%} of total)"), fontsize=11,
                               color=CTX_COLORS[c])
 
     return len(qs), update, 1800, True
@@ -478,10 +508,10 @@ def step5_denoise(fig, D):
         a.imshow(rgb(D["ctx"][c]))
         clean(a)
         frame_color(a, CTX_COLORS[c])
-        a.set_title(f"上下文 {c + 1}", fontsize=10, color=CTX_COLORS[c])
-    specs = [("x_t：模型此刻看到的", lambda f: rgb(f["x"]), None),
-             ("x₀ 估计 = x_t − t·v（RGB）", lambda f: rgb(f["x0"]), None),
-             ("x₀ 估计（深度）", lambda f: depth_img(f["x0"]), "magma")]
+        a.set_title(L(f"上下文 {c + 1}", f"Context {c + 1}"), fontsize=10, color=CTX_COLORS[c])
+    specs = [(L("x_t：模型此刻看到的", "x_t: what the model sees now"), lambda f: rgb(f["x"]), None),
+             (L("x₀ 估计 = x_t − t·v（RGB）", "x₀ estimate = x_t − t·v (RGB)"), lambda f: rgb(f["x0"]), None),
+             (L("x₀ 估计（深度）", "x₀ estimate (depth)"), lambda f: depth_img(f["x0"]), "magma")]
     arts = []
     for j, (title, fn, cmap) in enumerate(specs):
         a = fig.add_axes([0.19 + j * 0.2, 0.3, 0.18, 0.46])
@@ -492,12 +522,12 @@ def step5_denoise(fig, D):
     a.imshow(rgb(D["gt"]))
     clean(a)
     frame_color(a, TGT_COLOR)
-    a.set_title("真实答案（对照）", fontsize=10, color=TGT_COLOR)
+    a.set_title(L("真实答案（对照）", "Ground truth (reference)"), fontsize=10, color=TGT_COLOR)
     bar_ax = fig.add_axes([0.19, 0.2, 0.58, 0.04])
     bar = bar_ax.barh([0], [1.0], color="#c53030")[0]
     bar_ax.set_xlim(0, 1)
     bar_ax.set_yticks([])
-    bar_ax.set_xlabel("噪声程度 t（1 = 纯噪声，0 = 干净）", fontsize=10)
+    bar_ax.set_xlabel(L("噪声程度 t（1 = 纯噪声，0 = 干净）", "noise level t (1 = pure noise, 0 = clean)"), fontsize=10)
     t_text = fig.text(0.48, 0.8, "", ha="center", fontsize=14)
 
     def update(i):
@@ -505,14 +535,16 @@ def step5_denoise(fig, D):
         for art, fn in arts:
             art.set_data(fn(f))
         bar.set_width(f["t"])
-        t_text.set_text(f"第 {i}/{N_STEPS} 步   t = {f['t']:.2f}   每步 x ← x − v / {N_STEPS}")
+        t_text.set_text(L(f"第 {i}/{N_STEPS} 步   t = {f['t']:.2f}   每步 x ← x − v / {N_STEPS}",
+                          f"step {i}/{N_STEPS}   t = {f['t']:.2f}   each step x ← x − v / {N_STEPS}"))
 
     return len(fr), update, 120, False
 
 
 def step6_autoregressive(fig, D):
     orbit = D["orbit"]
-    fig.text(0.22, 0.85, "上下文窗口（送进 Transformer 的已知视角）", fontsize=12, ha="center")
+    fig.text(0.22, 0.85, L("上下文窗口（送进 Transformer 的已知视角）", "Context window (known views fed to the Transformer)"),
+             fontsize=12, ha="center")
     win_axes = [fig.add_axes([0.02 + j * 0.1, 0.63, 0.09, 0.17]) for j in range(4)]
     map_ax = fig.add_axes([0.04, 0.06, 0.32, 0.5])
     pts, cols = D["world"]
@@ -521,16 +553,17 @@ def step6_autoregressive(fig, D):
     map_ax.set_ylim(-5.2, 5.2)
     map_ax.set_aspect("equal")
     clean(map_ax)
-    map_ax.set_title("俯视图：相机位置", fontsize=11)
+    map_ax.set_title(L("俯视图：相机位置", "Top view: camera positions"), fontsize=11)
     ring = np.linspace(0, 2 * np.pi, 100)
     r_xy = 4.5 * math.cos(math.radians(25))
     map_ax.plot(r_xy * np.cos(ring), r_xy * np.sin(ring), c="#ccc", lw=1, ls=":")
-    map_ax.scatter([r_xy], [0], c=CTX_COLORS[0], s=80, zorder=3, label="真实照片")
+    map_ax.scatter([r_xy], [0], c=CTX_COLORS[0], s=80, zorder=3, label=L("真实照片", "real photo"))
     cam_dots = map_ax.scatter([], [], c="#555", s=40, zorder=3)
     cur = map_ax.scatter([], [], c=TGT_COLOR, s=140, marker="*", zorder=4)
     map_ax.legend(loc="lower left", fontsize=9)
     gen_axes = [fig.add_axes([0.46 + (k % 4) * 0.13, 0.6 - (k // 4) * 0.26, 0.12, 0.2]) for k in range(12)]
-    fig.text(0.715, 0.85, "逐个生成的新视角（标题：方位角 与 真实图的 PSNR）", fontsize=12, ha="center")
+    fig.text(0.715, 0.85, L("逐个生成的新视角（标题：方位角 与 真实图的 PSNR）",
+                           "Views generated one by one (title: azimuth, PSNR vs. ground truth)"), fontsize=12, ha="center")
 
     def update(i):
         step = orbit[i]
@@ -543,7 +576,7 @@ def step6_autoregressive(fig, D):
                 a.set_title(step["window_labels"][j], fontsize=9)
             else:
                 a.set_facecolor("#f5f5f5")
-                a.set_title("（空）", fontsize=9, color="#aaa")
+                a.set_title(L("（空）", "(empty)"), fontsize=9, color="#aaa")
         az = np.radians([o["azim"] for o in orbit[:i]])
         cam_dots.set_offsets(np.c_[r_xy * np.cos(az), r_xy * np.sin(az)] if i else np.empty((0, 2)))
         a_cur = math.radians(step["azim"])
@@ -573,7 +606,7 @@ def step7_pointcloud(fig, D):
     ax_gt.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c=cols, s=1, depthshade=False)
     setup_3d(ax_gt)
     ax_gt.view_init(elev=30, azim=-60)
-    ax_gt.set_title("对照：真实场景", fontsize=10)
+    ax_gt.set_title(L("对照：真实场景", "Reference: true scene"), fontsize=10)
     for a in (ax_img, ax_dep):
         clean(a)
     clouds, orbit = D["clouds"], D["orbit"]
@@ -589,14 +622,14 @@ def step7_pointcloud(fig, D):
         scat._offsets3d = (P[idx, 0], P[idx, 1], P[idx, 2])
         scat.set_color(C[idx])
         ax3.view_init(elev=30, azim=-60 + i * 2.5)
-        count.set_text(f"已融合 {k + 1}/12 个生成视角，共 {len(P)} 个点")
+        count.set_text(L(f"已融合 {k + 1}/12 个生成视角，共 {len(P)} 个点", f"Fused {k + 1}/12 generated views, {len(P)} points"))
         if i % sub == 0:
             ax_img.clear()
             ax_dep.clear()
             ax_img.imshow(rgb(orbit[k]["img"]))
             ax_dep.imshow(depth_img(orbit[k]["img"]), cmap="magma", vmin=-1, vmax=1)
-            ax_img.set_title(f"刚加入：{orbit[k]['azim']}° 的 RGB", fontsize=10)
-            ax_dep.set_title("和它的深度", fontsize=10)
+            ax_img.set_title(L(f"刚加入：{orbit[k]['azim']}° 的 RGB", f"Just added: RGB at {orbit[k]['azim']}°"), fontsize=10)
+            ax_dep.set_title(L("和它的深度", "and its depth"), fontsize=10)
             clean(ax_img)
             clean(ax_dep)
 
@@ -604,23 +637,45 @@ def step7_pointcloud(fig, D):
 
 
 STEPS = [
-    ("世界和相机", "一个训练时从没见过的新场景。两台相机（红、蓝）各拍了一张照片，我们想知道绿色相机那个位置看到什么。",
+    (L("世界和相机", "World and cameras"),
+     L("一个训练时从没见过的新场景。两台相机（红、蓝）各拍了一张照片，我们想知道绿色相机那个位置看到什么。",
+       "A new scene never seen in training. Two cameras (red, blue) each took a photo. What would the green camera see?"),
      step1_world),
-    ("相机 → Plücker 射线", "模型不认识“相机参数”，只认识向量。每个像素反投影成一条 3D 光线，用 6 个数 (d, o×d) 表示——相机从此变成了和图像同样大小的一张“图”。",
+    (L("相机 → Plücker 射线", "Camera → Plücker rays"),
+     L("模型不认识“相机参数”，只认识向量。每个像素反投影成一条 3D 光线，用 6 个数 (d, o×d) 表示——相机从此变成了和图像同样大小的一张“图”。",
+       "The model only understands vectors. Each pixel becomes a 3D ray written as 6 numbers (d, o×d), so a camera turns into an 'image' of the same size."),
      step2_plucker),
-    ("矩 m = o × d：光线在哪里", "d 只说明光线朝哪看。m = o × d 补上“这条光线在哪”：离原点多远、在哪个平面里。和力矩 τ = r × F 是同一个东西。",
+    (L("矩 m = o × d：光线在哪里", "Moment m = o × d: where the ray is"),
+     L("d 只说明光线朝哪看。m = o × d 补上“这条光线在哪”：离原点多远、在哪个平面里。和力矩 τ = r × F 是同一个东西。",
+       "d only says which way the ray points. m = o × d adds where the ray is: how far from the origin, and in which plane. It is the same as torque τ = r × F."),
      step_moment),
-    ("切成 token", "和 LLM 把句子切成 token 一样：每张图切成 64 个 patch。上下文是干净的照片，目标一开始是纯噪声。",
+    (L("切成 token", "Tokens"),
+     L("和 LLM 把句子切成 token 一样：每张图切成 64 个 patch。上下文是干净的照片，目标一开始是纯噪声。",
+       "Just as an LLM splits a sentence into tokens, each image becomes 64 patches. Context views are clean photos; the target starts as pure noise."),
      step3_tokens),
-    ("注意力：它在看哪里", "目标视角里黄框这个位置要画什么？模型去上下文照片里找。亮 = 注意力大（第 8 层，t = 0.3 时）。",
+    (L("注意力：它在看哪里", "Attention: where it looks"),
+     L("目标视角里黄框这个位置要画什么？模型去上下文照片里找。亮 = 注意力大（第 8 层，t = 0.3 时）。",
+       "What goes in the yellow box of the target view? The model looks it up in the context photos. Bright = high attention (layer 8, at t = 0.3)."),
      step4_attention),
-    ("去噪：从纯噪声到新视角", "rectified flow：每一步预测方向 v，走一小步。右边的 x₀ 估计：一开始是模糊的“平均”，后来越来越确定。",
+    (L("去噪：从纯噪声到新视角", "Denoising: from pure noise to a new view"),
+     L("rectified flow：每一步预测方向 v，走一小步。右边的 x₀ 估计：一开始是模糊的“平均”，后来越来越确定。",
+       "Rectified flow: predict the direction v and take a small step. The x₀ estimate starts as a blurry 'average' and becomes more and more certain."),
      step5_denoise),
-    ("自回归：绕场景一圈", "只给 1 张真实照片。每生成一张就放进上下文窗口（真实照片 + 最近 3 张生成的），再生成下一张——和 LLM 逐个 token 往后接完全一样。",
+    (L("自回归：绕场景一圈", "Autoregression: an orbit around the scene"),
+     L("只给 1 张真实照片。每生成一张就放进上下文窗口（真实照片 + 最近 3 张生成的），再生成下一张——和 LLM 逐个 token 往后接完全一样。",
+       "Only 1 real photo. Each new view joins the context window (real photo + last 3 generated) before the next one, just like an LLM appending tokens."),
      step6_autoregressive),
-    ("长出 3D", "3D 不是模型内部存的东西：每个生成视角的深度 → 反投影 X = R^T (D·K⁻¹[u,v,1]^T − t) → 融合成点云。",
+    (L("长出 3D", "Growing 3D"),
+     L("3D 不是模型内部存的东西：每个生成视角的深度 → 反投影 X = R^T (D·K⁻¹[u,v,1]^T − t) → 融合成点云。",
+       "3D is not stored inside the model: depth of each generated view → backproject X = R^T (D·K⁻¹[u,v,1]^T − t) → fuse into a point cloud."),
      step7_pointcloud),
 ]
+
+
+def header(fig, k, title, caption):
+    fig.text(0.02, 0.955, L(f"第 {k + 1}/{len(STEPS)} 步　{title}", f"Step {k + 1}/{len(STEPS)}   {title}"),
+             fontsize=18, weight="bold")
+    fig.text(0.02, 0.915, caption, fontsize=12, color="#444")
 
 
 # ═══════════════════════════════ 播放器 ═══════════════════════════════
@@ -649,9 +704,9 @@ class Player:
         self.k = k
         self.fig.clf()
         title, caption, build = STEPS[k]
-        self.fig.text(0.02, 0.955, f"第 {k + 1}/{len(STEPS)} 步　{title}", fontsize=18, weight="bold")
-        self.fig.text(0.02, 0.915, caption, fontsize=12, color="#444", wrap=True)
-        self.fig.text(0.98, 0.015, "→ / 空格 下一步　 ← 上一步　 R 重播　 Q 退出", fontsize=9, color="#999", ha="right")
+        header(self.fig, k, title, caption)
+        self.fig.text(0.98, 0.015, L("→ / 空格 下一步　 ← 上一步　 R 重播　 Q 退出", "→ / Space next    ← back    R replay    Q quit"),
+                      fontsize=9, color="#999", ha="right")
         self.n, self.update, self.interval, self.loop = build(self.fig, self.D)
         self.frame, self.finished = 0, self.n <= 1
         self.update(0)
@@ -686,18 +741,20 @@ class Player:
         elif e.key == "r":
             self.show(self.k)
         elif e.key == "q":
-            self.timer.stop()  # 常驻计时器不停的话，窗口关不掉
             plt.close(self.fig)
+            # macOS 后端关掉窗口后，事件循环有时没被唤醒，程序就不退出（取决于有没有别的事件，
+            # 比如鼠标移动）。这里没有要保存的状态，用后台线程兜底：0.5 秒后直接结束进程。
+            sys.stdout.flush()
+            threading.Timer(0.5, os._exit, args=(0,)).start()
 
 
 def export(D):
     """无窗口模式：每一步存 3 帧（开始 / 中间 / 结束）。"""
-    out = OUT / "walkthrough"
+    out = OUT / ("walkthrough_en" if LANG == "en" else "walkthrough")
     out.mkdir(parents=True, exist_ok=True)
     for k, (title, caption, build) in enumerate(STEPS):
         fig = plt.figure(figsize=(15, 8.4))
-        fig.text(0.02, 0.955, f"第 {k + 1}/{len(STEPS)} 步　{title}", fontsize=18, weight="bold")
-        fig.text(0.02, 0.915, caption, fontsize=12, color="#444")
+        header(fig, k, title, caption)
         n, update, _, _ = build(fig, D)
         for tag, i in [("a", 0), ("b", n // 2), ("c", n - 1)]:
             for j in range(i + 1) if build is step7_pointcloud else [i]:  # 点云那一步需要依次累积
@@ -714,7 +771,7 @@ def export_gifs(D, dpi=72, max_mb=1.9):
     """
     from PIL import Image
 
-    out = OUT / "gifs"
+    out = OUT / ("gifs_en" if LANG == "en" else "gifs")
     out.mkdir(parents=True, exist_ok=True)
     names = ["world", "plucker", "moment", "tokens", "attention", "denoise", "autoregressive", "pointcloud"]
     stride = {step1_world: 3, step3_tokens: 2}  # 180 帧的旋转、49 帧的 token 动画隔帧抽取
@@ -733,8 +790,7 @@ def export_gifs(D, dpi=72, max_mb=1.9):
 
     for k, (title, caption, build) in enumerate(STEPS):
         fig = plt.figure(figsize=(15, 8.4), dpi=dpi)
-        fig.text(0.02, 0.955, f"第 {k + 1}/{len(STEPS)} 步　{title}", fontsize=18, weight="bold")
-        fig.text(0.02, 0.915, caption, fontsize=12, color="#444")
+        header(fig, k, title, caption)
         n, update, interval, loop = build(fig, D)
         step = stride.get(build, 1)
         frames, durations = [], []
@@ -760,8 +816,10 @@ def main():
     p.add_argument("--scene", type=int, default=0)
     p.add_argument("--export", action="store_true")
     p.add_argument("--gif", action="store_true", help="把每一步录成 GIF，存到 out/gifs/")
+    p.add_argument("--lang", choices=["zh", "en"], default="zh", help="画面语言：zh（默认）或 en")
     p.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu")
     args = p.parse_args()
+    assert args.lang == LANG  # LANG 在导入时已经从命令行读出
     D = prepare(args.scene, args.device)
     if args.export:
         export(D)
@@ -770,7 +828,7 @@ def main():
         export_gifs(D)
         return
     fig = plt.figure(figsize=(15, 8.4))
-    fig.canvas.manager.set_window_title("Atlas-mini：一步一步看 world model 内部")
+    fig.canvas.manager.set_window_title(L("Atlas-mini：一步一步看 world model 内部", "Atlas-mini: a step-by-step look inside a world model"))
     player = Player(fig, D)
     player.show(0)
     plt.show()
